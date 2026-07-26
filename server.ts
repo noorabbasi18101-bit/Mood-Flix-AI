@@ -751,6 +751,217 @@ function getSmartChatFallback(
   return { replyText, movieCards };
 }
 
+// Helper to fetch 20-50 candidate movies/series directly from TMDB API using discover/movie and discover/tv
+const TMDB_GENRE_MAP: Record<string, { id: number; name: string }> = {
+  horror: { id: 27, name: 'Horror' },
+  scary: { id: 27, name: 'Horror' },
+  ghost: { id: 27, name: 'Horror' },
+  bhoot: { id: 27, name: 'Horror' },
+  fear: { id: 27, name: 'Horror' },
+  creepy: { id: 27, name: 'Horror' },
+  slasher: { id: 27, name: 'Horror' },
+  supernatural: { id: 27, name: 'Horror' },
+  tumbbad: { id: 27, name: 'Horror' },
+
+  romance: { id: 10749, name: 'Romance' },
+  romantic: { id: 10749, name: 'Romance' },
+  love: { id: 10749, name: 'Romance' },
+  pyar: { id: 10749, name: 'Romance' },
+  mohabbat: { id: 10749, name: 'Romance' },
+
+  thriller: { id: 53, name: 'Thriller' },
+  suspense: { id: 53, name: 'Thriller' },
+  investigation: { id: 53, name: 'Thriller' },
+  drishyam: { id: 53, name: 'Thriller' },
+
+  scifi: { id: 878, name: 'Sci-Fi' },
+  'sci-fi': { id: 878, name: 'Sci-Fi' },
+  space: { id: 878, name: 'Sci-Fi' },
+  alien: { id: 878, name: 'Sci-Fi' },
+
+  comedy: { id: 35, name: 'Comedy' },
+  funny: { id: 35, name: 'Comedy' },
+  mazahia: { id: 35, name: 'Comedy' },
+
+  action: { id: 28, name: 'Action' },
+  fight: { id: 28, name: 'Action' },
+
+  mystery: { id: 9648, name: 'Mystery' },
+  crime: { id: 80, name: 'Crime' },
+  drama: { id: 18, name: 'Drama' },
+  animation: { id: 16, name: 'Animation' },
+  anime: { id: 16, name: 'Animation' },
+  fantasy: { id: 14, name: 'Fantasy' },
+};
+
+interface UserCriteria {
+  genreId?: number;
+  genreName?: string;
+  originalLanguage?: string;
+  originCountry?: string;
+  mediaType: 'movie' | 'tv' | 'both';
+}
+
+function parseUserCriteria(query: string): UserCriteria {
+  const msgLower = query.toLowerCase();
+
+  let genreId: number | undefined;
+  let genreName: string | undefined;
+
+  for (const [key, val] of Object.entries(TMDB_GENRE_MAP)) {
+    if (msgLower.includes(key)) {
+      genreId = val.id;
+      genreName = val.name;
+      break;
+    }
+  }
+
+  let originalLanguage: string | undefined;
+  let originCountry: string | undefined;
+
+  if (msgLower.includes('korean') || msgLower.includes('kdrama') || msgLower.includes('k-drama')) {
+    originalLanguage = 'ko';
+    originCountry = 'KR';
+  } else if (msgLower.includes('indian') || msgLower.includes('bollywood') || msgLower.includes('hindi')) {
+    originalLanguage = 'hi';
+    originCountry = 'IN';
+  } else if (msgLower.includes('south indian') || msgLower.includes('tamil') || msgLower.includes('telugu')) {
+    originalLanguage = msgLower.includes('tamil') ? 'ta' : 'te';
+  } else if (msgLower.includes('pakistani') || msgLower.includes('urdu')) {
+    originalLanguage = 'ur';
+    originCountry = 'PK';
+  } else if (msgLower.includes('japanese') || msgLower.includes('anime')) {
+    originalLanguage = 'ja';
+  } else if (msgLower.includes('hollywood') || msgLower.includes('english')) {
+    originalLanguage = 'en';
+  }
+
+  let mediaType: 'movie' | 'tv' | 'both' = 'movie';
+  if (msgLower.includes('series') || msgLower.includes('tv show') || msgLower.includes('kdrama') || msgLower.includes('k-drama')) {
+    mediaType = msgLower.includes('movie') ? 'both' : 'tv';
+  }
+
+  return { genreId, genreName, originalLanguage, originCountry, mediaType };
+}
+
+async function fetchTmdbCandidates(message: string): Promise<any[]> {
+  try {
+    const tmdbKey = process.env.VITE_TMDB_API_KEY || process.env.TMDB_API_KEY || DEFAULT_TMDB_KEY;
+    const criteria = parseUserCriteria(message);
+    const msgLower = message.toLowerCase();
+
+    const fetchUrls: string[] = [];
+
+    // Check if user is referencing a specific movie like "movies like Annabelle" or "Annabelle"
+    const movieMatch = msgLower.match(/like\s+([a-zA-Z0-9\s]+)|about\s+([a-zA-Z0-9\s]+)|tell me about\s+([a-zA-Z0-9\s]+)|is\s+([a-zA-Z0-9\s]+)/i);
+    let movieNameQuery = '';
+    if (movieMatch) {
+      movieNameQuery = (movieMatch[1] || movieMatch[2] || movieMatch[3] || movieMatch[4] || '').trim();
+    } else if (msgLower.includes('annabelle')) {
+      movieNameQuery = 'annabelle';
+    } else if (msgLower.includes('conjuring')) {
+      movieNameQuery = 'conjuring';
+    } else if (msgLower.includes('tumbbad')) {
+      movieNameQuery = 'tumbbad';
+    } else if (msgLower.includes('insidious')) {
+      movieNameQuery = 'insidious';
+    } else if (msgLower.includes('drishyam')) {
+      movieNameQuery = 'drishyam';
+    }
+
+    if (movieNameQuery && movieNameQuery.length > 2) {
+      fetchUrls.push(`https://api.themoviedb.org/3/search/movie?api_key=${tmdbKey}&query=${encodeURIComponent(movieNameQuery)}&page=1`);
+    }
+
+    const buildUrl = (type: 'movie' | 'tv', page: number, sortBy = 'popularity.desc', minVotes = 30) => {
+      let url = `https://api.themoviedb.org/3/discover/${type}?api_key=${tmdbKey}&page=${page}&sort_by=${sortBy}&vote_count.gte=${minVotes}`;
+      if (criteria.genreId) {
+        url += `&with_genres=${criteria.genreId}`;
+      }
+      if (criteria.originalLanguage) {
+        url += `&with_original_language=${criteria.originalLanguage}`;
+      }
+      if (criteria.originCountry) {
+        url += `&with_origin_country=${criteria.originCountry}`;
+      }
+      return url;
+    };
+
+    if (criteria.mediaType === 'tv') {
+      fetchUrls.push(buildUrl('tv', 1, 'popularity.desc'));
+      fetchUrls.push(buildUrl('tv', 2, 'popularity.desc'));
+      fetchUrls.push(buildUrl('tv', 1, 'vote_average.desc', 150));
+    } else if (criteria.mediaType === 'both') {
+      fetchUrls.push(buildUrl('movie', 1, 'popularity.desc'));
+      fetchUrls.push(buildUrl('tv', 1, 'popularity.desc'));
+    } else {
+      fetchUrls.push(buildUrl('movie', 1, 'popularity.desc'));
+      fetchUrls.push(buildUrl('movie', 2, 'popularity.desc'));
+      fetchUrls.push(buildUrl('movie', 1, 'vote_average.desc', 200));
+    }
+
+    const responses = await Promise.all(fetchUrls.map((u) => fetch(u).then((r) => (r.ok ? r.json() : null))));
+    let rawResults: any[] = [];
+    responses.forEach((r) => {
+      if (r && Array.isArray(r.results)) {
+        rawResults.push(...r.results);
+      }
+    });
+
+    // If we searched for a movie name and got a top match, let's also fetch TMDb recommendations for that movie ID
+    if (movieNameQuery && rawResults.length > 0 && rawResults[0]?.id) {
+      const topMovieId = rawResults[0].id;
+      try {
+        const recRes = await fetch(`https://api.themoviedb.org/3/movie/${topMovieId}/recommendations?api_key=${tmdbKey}&page=1`);
+        if (recRes.ok) {
+          const recData = await recRes.json();
+          if (recData?.results && Array.isArray(recData.results)) {
+            rawResults.unshift(...recData.results);
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    const seenIds = new Set<number>();
+    const candidates: any[] = [];
+
+    for (const item of rawResults) {
+      if (!item || !item.id || seenIds.has(item.id)) continue;
+      seenIds.add(item.id);
+
+      const title = item.title || item.name || item.original_title || item.original_name;
+      if (!title) continue;
+
+      // Strict genre verification if genre specified and item has genre_ids
+      if (criteria.genreId && item.genre_ids && Array.isArray(item.genre_ids) && item.genre_ids.length > 0) {
+        if (!item.genre_ids.includes(criteria.genreId)) {
+          continue;
+        }
+      }
+
+      candidates.push({
+        tmdbId: item.id,
+        title: title,
+        year: (item.release_date || item.first_air_date || '').slice(0, 4) || '2023',
+        rating: item.vote_average ? Math.round(item.vote_average * 10) / 10 : 8.0,
+        overview: item.overview || '',
+        poster_path: item.poster_path || null,
+        backdrop_path: item.backdrop_path || null,
+        media_type: item.title ? 'movie' : 'tv',
+      });
+    }
+
+    if (candidates.length > 0) {
+      return candidates.slice(0, 40);
+    }
+  } catch (err) {
+    console.warn('Failed to fetch TMDb candidates:', err);
+  }
+  return [];
+}
+
 // AI Chat Assistant API
 app.post('/api/ai/chat', async (req, res) => {
   const { message = '', language = 'en', history = [], previouslyRecommended = [] } = req.body || {};
@@ -771,7 +982,12 @@ app.post('/api/ai/chat', async (req, res) => {
         ? previouslyRecommended.join(', ')
         : 'None yet';
 
-      const prompt = `You are MoodFlix AI, an elite film & drama expert, movie critic, and friendly chat companion.
+      const tmdbCandidates = await fetchTmdbCandidates(message);
+      const candidateListStr = tmdbCandidates.length > 0
+        ? JSON.stringify(tmdbCandidates, null, 2)
+        : 'Use real verified TMDb movies matching the requested genre.';
+
+      const prompt = `You are MoodFlix AI, an elite movie recommendation engine & cinema expert.
 
 CURRENT USER MESSAGE: "${message}"
 LANGUAGE SETTING: ${isUrdu ? 'Roman Urdu (Urdu written purely in Latin/English alphabet)' : 'English'}.
@@ -782,40 +998,50 @@ ${historySummary}
 PREVIOUSLY RECOMMENDED OR WATCHED TITLES IN THIS SESSION:
 ${prevRecList}
 
-CRITICAL RULES FOR CHAT BEHAVIOR:
+VERIFIED TMDB MOVIE/SERIES CANDIDATES (REAL DISCOVER DATA):
+${candidateListStr}
 
-1. ALWAYS ANSWER THE USER'S LATEST MESSAGE FIRST:
-   - Understand and answer the user's latest message directly before doing anything else.
-   - If the user asks a question about a movie (e.g. "Is this movie horror?", "Tell me about Tumbbad", "Is it scary?"), ANSWER THE QUESTION DIRECTLY in replyText.
-   - When answering a question or explaining a movie, SET movieCards TO AN EMPTY ARRAY []! Do NOT output movie cards when the user is asking a question or chatting.
+CRITICAL MOODFLIX AI MANDATES & BEHAVIOR RULES:
 
-2. WHEN TO RECOMMEND MOVIES:
-   - ONLY output movie recommendations in movieCards when the user explicitly asks for recommendations, suggestions, lists, or "more" movies (e.g. "Recommend movies", "Suggest horror movies", "More movies", "Give me more").
+1. INTENT RECOGNITION & BEHAVIOR:
+   - FOR BROAD OR SPECIFIC RECOMMENDATION REQUESTS (e.g., "I want scary movies", "I want romantic movies", "I want action movies", "I want ghost movies", "Movies like Annabelle"):
+     * ALWAYS OUTPUT 6 TO 10 MATCHING MOVIE CARDS IN movieCards IMMEDIATELY!
+     * DO NOT ASK QUESTIONS BEFORE SHOWING RESULTS. Always present the movie cards first!
+     * In replyText, introduce the list and ALWAYS include a helpful prompt offer at the end:
+       - English: "If you want a specific style or sub-genre (like ghost/jinn stories, psychological horror, slasher, or movies like a specific title), tell me and I will refine the recommendations for you!"
+       - Roman Urdu: "Agar aap kisi khas kisam ki horror/movie style chahte hain (jaise bhoot/jinn ki kahaniyan, psychological horror, ya Annabelle jaisi movies), to mujhe batayein main mazeed accurately recommend karunga!"
 
-3. WATCHED LIST / DIFFERENT SELECTIONS:
-   - If the user says "I have watched this", "I watched those already", or "I have already seen these", recommend DIFFERENT, NEW movies from the SAME genre/industry active in context. Do not repeat any title from PREVIOUSLY RECOMMENDED OR WATCHED TITLES.
+   - FOR MOVIE DETAIL / STORY QUESTIONS (e.g., "What is the story of this movie?", "Tell me its summary", "Who is in this movie?", "Tell me about Annabelle"):
+     * Provide COMPLETE MOVIE DETAILS directly in replyText:
+       • Short Story Summary / Plot line
+       • Genre & Mood
+       • Release Year & TMDb Rating
+       • Cast / Notable Stars & Director
+       • Why it matches the user's taste
+     * Set movieCards = [] when answering a detail/story question!
 
-4. MAINTAIN THE CURRENT GENRE:
-   - Maintain the active genre (e.g. Horror -> More Horror recommendations, Indian Thriller -> More Indian Thriller recommendations) unless the user explicitly requests to change genres.
+2. ACCURATE TMDB RECOMMENDATION RULES:
+   - NEVER INVENT OR HALLUCINATE MOVIE NAMES.
+   - SELECT MOVIES STRICTLY FROM THE VERIFIED TMDB CANDIDATES PROVIDED ABOVE.
+   - GENRE PURITY RULE:
+     * HORROR requests MUST ONLY return horror movies/shows (genre 27).
+     * ROMANCE requests MUST ONLY return romance movies/shows (genre 10749).
+     * THRILLER requests MUST ONLY return thriller/suspense movies (genre 53).
+     * KOREAN requests MUST ONLY return Korean titles.
+   - THEMES & SIMILAR MOVIES ("ghost/jinn", "movies like Annabelle"): Select candidates that match supernatural, possession, doll, or demonic themes.
+   - NO REPEATS: Do not repeat any title listed in PREVIOUSLY RECOMMENDED OR WATCHED TITLES.
+   - Select 6 to 10 best matching items from the candidate list when recommendations are requested.
+   - Copy exact tmdbId, title, year, rating, overview, poster_path, and backdrop_path from the candidate object!
 
-5. NEVER USE BOILERPLATE INTROS:
-   - NEVER reply with "I am your movie expert companion..." or capability descriptions unless the user explicitly asks "Who are you?" or "What can you do?".
-   - DO NOT switch into introduction mode or capability explanation mode during an ongoing conversation!
-
-6. CONVERSATION CONTEXT & MEMORY:
-   - Remember the currently discussed movie, topic, and user preferences from the CONVERSATION HISTORY.
-
-7. SCRIPT & LANGUAGE FORMATTING:
+3. LANGUAGE & SCRIPT:
    - If language is 'ur' or user writes in Roman Urdu:
-     * NEVER USE ARABIC/URDU SCRIPT (no Urdu script characters).
+     * NEVER USE ARABIC/URDU SCRIPT (no Urdu letters).
      * WRITE EVERYTHING IN PURE ROMAN URDU (Latin alphabet).
-     * Example: "Nahi, Badla horror movie nahi hai. Badla ek zabardast Indian crime mystery thriller hai."
-   - If language is 'en': Write in natural, engaging English.
 
 OUTPUT FORMAT:
 Return strict JSON with:
-- replyText: Direct, accurate, conversational answer addressing the user's latest message first.
-- movieCards: Array of movie objects (0 to 6 items). MUST be [] if the user asked a question or did not explicitly ask for movie recommendations.`;
+- replyText: Conversational, friendly, and expert answer.
+- movieCards: Array of movie objects (6 to 10 items when recommendations requested, [] when user asked a question). Include tmdbId, title, year, genre, rating, overview, poster_path, backdrop_path, and matchReason.`;
 
       const response = await ai.models.generateContent({
         model: 'gemini-3.6-flash',
@@ -831,14 +1057,17 @@ Return strict JSON with:
                 items: {
                   type: Type.OBJECT,
                   properties: {
+                    tmdbId: { type: Type.INTEGER },
                     title: { type: Type.STRING },
                     year: { type: Type.STRING },
                     genre: { type: Type.STRING },
                     rating: { type: Type.NUMBER },
-                    summary: { type: Type.STRING },
+                    overview: { type: Type.STRING },
+                    poster_path: { type: Type.STRING },
+                    backdrop_path: { type: Type.STRING },
                     matchReason: { type: Type.STRING },
                   },
-                  required: ['title', 'genre', 'summary', 'matchReason'],
+                  required: ['tmdbId', 'title', 'genre', 'overview', 'matchReason'],
                 },
               },
             },
@@ -854,7 +1083,7 @@ Return strict JSON with:
       }
     }
   } catch (error: any) {
-    // Gracefully use smart fallback engine when rate limit or network issue occurs
+    console.warn('AI chat error:', error);
   }
 
   const fallbackResult = getSmartChatFallback(message, language, history, previouslyRecommended);
@@ -870,133 +1099,113 @@ app.post('/api/ai/match', async (req, res) => {
       return res.status(400).json({ error: 'Mood query is required' });
     }
 
-    if (!apiKey) {
-      return res.json({
-        aiSummaryEn: `Here are recommendations for your mood: "${mood}"`,
-        aiSummaryUrdu: `Aap ke mood "${mood}" ke hisab se ye top recommendations hain:`,
-        recommendedMovies: [
-          {
-            title: 'Inception',
-            matchScore: 98,
-            matchReasonEn: 'Mind-bending psychological masterpiece matching your complex state of mind.',
-            matchReasonUrdu: 'Agar aap mind-bending aur zahn ko ghumane wali suspense movies pasand karte hain to ye movie perfect hai.',
-            moodTags: ['Mind-Bending', 'Intense', 'Sci-Fi'],
-          },
-          {
-            title: 'Parasite',
-            matchScore: 95,
-            matchReasonEn: 'Dark social thriller filled with surprising turns and sharp tension.',
-            matchReasonUrdu: 'Agar aap suspense aur ajeeb o ghareeb twists pasand karte hain to Parasite zaroor dekhein.',
-            moodTags: ['Korean', 'Thriller', 'Dark Comedy'],
-          },
-          {
-            title: 'The Others',
-            matchScore: 93,
-            matchReasonEn: 'Atmospheric psychological horror that builds incredible eerie suspense.',
-            matchReasonUrdu: 'Agar aap suspense aur psychological horror pasand karte hain to ye movie aap ke mood ke liye perfect match hai.',
-            moodTags: ['Horror', 'Atmospheric', 'Eerie'],
-          },
-          {
-            title: 'The Dark Knight',
-            matchScore: 96,
-            matchReasonEn: 'High octane dark action driven by unforgettable drama.',
-            matchReasonUrdu: 'Agar aap dark, gritty action aur Joker ki zordar acting pasand karte hain to ye movie zabardast hai.',
-            moodTags: ['Action', 'Gritty', 'Dark'],
-          },
-        ],
-      });
-    }
+    const isUrdu = language === 'ur';
 
-    const prompt = `You are MoodFlix AI, an elite movie recommendation engine.
+    if (apiKey) {
+      const tmdbCandidates = await fetchTmdbCandidates(mood);
+      const candidateListStr = tmdbCandidates.length > 0
+        ? JSON.stringify(tmdbCandidates, null, 2)
+        : 'Use real verified TMDb movies matching the requested genre.';
+
+      const prompt = `You are MoodFlix AI, an elite movie recommendation engine.
 The user describes their mood: "${mood}".
-Active user language context: ${language === 'ur' ? 'Roman Urdu (Urdu written in Latin script)' : 'English'}.
+Active user language context: ${isUrdu ? 'Roman Urdu (Urdu written in Latin script)' : 'English'}.
 
-CRITICAL EXTRACTION & VALIDATION MANDATE:
-1. Extract and validate Genre, Country/Industry, Language, and Mood from the user's mood query.
-2. The AI MUST ONLY recommend movies/dramas that match ALL requested filters.
-   - Example: If the user requests "Indian thriller movies", ONLY recommend Indian thriller movies like Drishyam, Andhadhun, Ratsasan, Kahaani, Ugly, A Wednesday, Special 26, Badla.
-   - Do NOT recommend Romance movies when Thriller is requested.
-   - Do NOT recommend Hollywood movies when Indian movies are requested unless explicitly asked!
-3. Recommend 4 to 6 real, highly acclaimed movies/dramas that genuinely fit all extracted filters.
-4. Provide explanations in BOTH English and Roman Urdu for every movie.
-5. For Roman Urdu (matchReasonUrdu and aiSummaryUrdu):
-   - DO NOT USE URDU SCRIPT (no Arabic/Urdu lettering).
-   - Write purely in Roman Urdu using English alphabet (e.g. "Drishyam, Andhadhun aur Ratsasan behad zabardast Indian thriller movies hain.").
-6. Return strict JSON following the schema.`;
+VERIFIED TMDB MOVIE/SERIES CANDIDATES (REAL DISCOVER DATA):
+${candidateListStr}
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            aiSummaryEn: { type: Type.STRING },
-            aiSummaryUrdu: { type: Type.STRING },
-            recommendedMovies: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  matchScore: { type: Type.INTEGER },
-                  matchReasonEn: { type: Type.STRING },
-                  matchReasonUrdu: { type: Type.STRING },
-                  moodTags: {
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING },
+CRITICAL MANDATES:
+1. Extract Genre, Country, Language, and Mood from "${mood}".
+2. SELECT 6 TO 10 MOVIES STRICTLY FROM THE TMDB CANDIDATES LIST ABOVE. DO NOT INVENT MOVIE NAMES.
+3. GENRE PURITY MANDATE:
+   - HORROR: Only Horror titles.
+   - ROMANCE: Only Romance titles.
+   - K-DRAMA: Only Korean titles.
+4. Copy exact tmdbId, title, year, rating, overview, poster_path, backdrop_path from the candidate object!
+5. Provide explanations in BOTH English (matchReasonEn) and Roman Urdu (matchReasonUrdu).
+6. For Roman Urdu: DO NOT USE URDU SCRIPT. Write purely in Roman Urdu using English alphabet.
+7. Return strict JSON.`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.6-flash',
+        contents: prompt,
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              aiSummaryEn: { type: Type.STRING },
+              aiSummaryUrdu: { type: Type.STRING },
+              recommendedMovies: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    tmdbId: { type: Type.INTEGER },
+                    title: { type: Type.STRING },
+                    year: { type: Type.STRING },
+                    rating: { type: Type.NUMBER },
+                    overview: { type: Type.STRING },
+                    poster_path: { type: Type.STRING },
+                    backdrop_path: { type: Type.STRING },
+                    matchScore: { type: Type.INTEGER },
+                    matchReasonEn: { type: Type.STRING },
+                    matchReasonUrdu: { type: Type.STRING },
+                    moodTags: {
+                      type: Type.ARRAY,
+                      items: { type: Type.STRING },
+                    },
                   },
+                  required: ['title', 'matchScore', 'matchReasonEn', 'matchReasonUrdu', 'moodTags'],
                 },
-                required: ['title', 'matchScore', 'matchReasonEn', 'matchReasonUrdu', 'moodTags'],
               },
             },
+            required: ['aiSummaryEn', 'aiSummaryUrdu', 'recommendedMovies'],
           },
-          required: ['aiSummaryEn', 'aiSummaryUrdu', 'recommendedMovies'],
         },
-      },
-    });
+      });
 
-    const jsonText = response.text?.trim() || '{}';
-    const result = JSON.parse(jsonText);
+      const jsonText = response.text?.trim() || '{}';
+      const result = JSON.parse(jsonText);
 
-    return res.json(result);
+      return res.json(result);
+    }
   } catch (error: any) {
-    return res.json({
-      aiSummaryEn: `Here are top recommendations tailored for your mood: "${mood}"`,
-      aiSummaryUrdu: `Aap ke mood "${mood}" ke hisab se ye top recommendations hain:`,
-      recommendedMovies: [
-        {
-          title: 'Inception',
-          matchScore: 98,
-          matchReasonEn: 'Mind-bending psychological masterpiece matching your complex state of mind.',
-          matchReasonUrdu: 'Agar aap mind-bending aur zahn ko ghumane wali suspense movies pasand karte hain to ye movie perfect hai.',
-          moodTags: ['Mind-Bending', 'Intense', 'Sci-Fi'],
-        },
-        {
-          title: 'Parasite',
-          matchScore: 95,
-          matchReasonEn: 'Dark social thriller filled with surprising turns and sharp tension.',
-          matchReasonUrdu: 'Agar aap suspense aur ajeeb o ghareeb twists pasand karte hain to Parasite zaroor dekhein.',
-          moodTags: ['Korean', 'Thriller', 'Dark Comedy'],
-        },
-        {
-          title: 'The Others',
-          matchScore: 93,
-          matchReasonEn: 'Atmospheric psychological horror that builds incredible eerie suspense.',
-          matchReasonUrdu: 'Agar aap suspense aur psychological horror pasand karte hain to ye movie aap ke mood ke liye perfect match hai.',
-          moodTags: ['Horror', 'Atmospheric', 'Eerie'],
-        },
-        {
-          title: 'The Dark Knight',
-          matchScore: 96,
-          matchReasonEn: 'High octane dark action driven by unforgettable drama.',
-          matchReasonUrdu: 'Agar aap dark, gritty action aur Joker ki zordar acting pasand karte hain to ye movie zabardast hai.',
-          moodTags: ['Action', 'Gritty', 'Dark'],
-        },
-      ],
-    });
+    console.warn('AI match error:', error);
   }
+
+  return res.json({
+    aiSummaryEn: `Here are top recommendations tailored for your mood: "${mood}"`,
+    aiSummaryUrdu: `Aap ke mood "${mood}" ke hisab se ye top recommendations hain:`,
+    recommendedMovies: [
+      {
+        tmdbId: 27205,
+        title: 'Inception',
+        year: '2010',
+        rating: 8.4,
+        poster_path: '/oYuLE1S1S3P22C929S3A37C1S32.jpg',
+        backdrop_path: '/8ZTVqvKDQ8P2D1yS80mX.jpg',
+        overview: 'Cobb, a skilled thief who commits corporate espionage by infiltrating subconscious dreams.',
+        matchScore: 98,
+        matchReasonEn: 'Mind-bending psychological masterpiece matching your complex state of mind.',
+        matchReasonUrdu: 'Agar aap mind-bending aur zahn ko ghumane wali suspense movies pasand karte hain to ye movie perfect hai.',
+        moodTags: ['Mind-Bending', 'Intense', 'Sci-Fi'],
+      },
+      {
+        tmdbId: 496243,
+        title: 'Parasite',
+        year: '2019',
+        rating: 8.5,
+        poster_path: '/7IiT3883aL.jpg',
+        backdrop_path: '/hiE4U611.jpg',
+        overview: 'All unemployed, Ki-taeks family takes peculiar interest in the wealthy Parks family.',
+        matchScore: 95,
+        matchReasonEn: 'Dark social thriller filled with surprising turns and sharp tension.',
+        matchReasonUrdu: 'Agar aap suspense aur ajeeb o ghareeb twists pasand karte hain to Parasite zaroor dekhein.',
+        moodTags: ['Korean', 'Thriller', 'Dark Comedy'],
+      },
+    ],
+  });
 });
 
 async function startServer() {
