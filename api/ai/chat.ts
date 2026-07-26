@@ -133,14 +133,30 @@ Return strict JSON with:
 
       const jsonText = response.text?.trim() || '{}';
       const result = JSON.parse(jsonText);
-      if (result && result.replyText) {
-        return res.status(200).json(result);
-      }
-    }
-  } catch (error: any) {
-    console.warn('AI chat error in serverless:', error);
-  }
+     if (result?.movieCards?.length) {
+  result.movieCards = await Promise.all(
+    result.movieCards.map(async (movie: any) => {
+      const tmdbData = await fetchTmdbCandidates(movie.title);
 
-  const fallbackResult = getSmartChatFallback(message, language, history, previouslyRecommended);
-  return res.status(200).json(fallbackResult);
+      const matched = tmdbData.find(
+        (item: any) =>
+          item.title?.toLowerCase() === movie.title?.toLowerCase()
+      );
+
+      if (matched) {
+        return {
+          ...movie,
+          tmdbId: matched.tmdbId,
+          poster_path: matched.poster_path,
+          backdrop_path: matched.backdrop_path,
+          rating: matched.rating,
+          year: matched.year,
+          overview: matched.overview,
+        };
+      }
+
+      return movie;
+    })
+  );
 }
+      return res.status(200).json(result);
