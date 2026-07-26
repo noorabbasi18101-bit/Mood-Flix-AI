@@ -134,41 +134,20 @@ Return strict JSON with:
 const jsonText = response.text?.trim() || '{}';
 const result = JSON.parse(jsonText);
 
-if (result?.movieCards?.length) {
-  result.movieCards = await Promise.all(
-    result.movieCards.map(async (movie: any) => {
-      try {
-        const tmdbData = await fetchTmdbCandidates(movie.title);
-
-        const matched = tmdbData.find(
-          (item: any) =>
-            item.title?.toLowerCase() === movie.title?.toLowerCase()
-        );
-
-        if (matched) {
-          return {
-            ...movie,
-            tmdbId: matched.tmdbId,
-            title: matched.title || movie.title,
-            poster_path: matched.poster_path || '',
-            backdrop_path: matched.backdrop_path || '',
-            rating: matched.rating || movie.rating,
-            year: matched.year || movie.year,
-            overview: matched.overview || movie.overview,
-            genre: matched.genre || movie.genre,
-          };
-        }
-
-        return movie;
-      } catch (error) {
-        console.warn("TMDB enrichment failed", error);
-        return movie;
-      }
-    })
-  );
-}
-
 if (result && result.replyText) {
   return res.status(200).json(result);
 }
- 
+
+  } catch (error: any) {
+    console.warn('AI chat error in serverless:', error);
+  }
+
+  const fallbackResult = getSmartChatFallback(
+    message,
+    language,
+    history,
+    previouslyRecommended
+  );
+
+  return res.status(200).json(fallbackResult);
+}
