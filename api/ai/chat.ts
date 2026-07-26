@@ -131,7 +131,7 @@ Return strict JSON with:
         },
       });
 
-   const jsonText = response.text?.trim() || '{}';
+const jsonText = response.text?.trim() || '{}';
 const result = JSON.parse(jsonText);
 
 if (result?.movieCards?.length) {
@@ -150,9 +150,9 @@ if (result?.movieCards?.length) {
             ...movie,
             tmdbId: matched.tmdbId,
             title: matched.title || movie.title,
-            poster_path: matched.poster_path || movie.poster_path || '',
-            backdrop_path: matched.backdrop_path || movie.backdrop_path || '',
-            rating: matched.rating ?? movie.rating,
+            poster_path: matched.poster_path || '',
+            backdrop_path: matched.backdrop_path || '',
+            rating: matched.rating || movie.rating,
             year: matched.year || movie.year,
             overview: matched.overview || movie.overview,
             genre: matched.genre || movie.genre,
@@ -161,7 +161,7 @@ if (result?.movieCards?.length) {
 
         return movie;
       } catch (error) {
-        console.warn(TMDB enrichment failed for ${movie.title}, error);
+        console.warn("TMDB enrichment failed", error);
         return movie;
       }
     })
@@ -170,5 +170,5 @@ if (result?.movieCards?.length) {
 
 if (result && result.replyText) {
   return res.status(200).json(result);
-} 
+}
  
