@@ -1,0 +1,6 @@
+{
+  "name": "MoodFlix AI",
+  "description": "AI-powered cinematic movie recommendation platform supporting English and Roman Urdu",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
