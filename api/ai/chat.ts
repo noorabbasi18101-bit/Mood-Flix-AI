@@ -131,32 +131,44 @@ Return strict JSON with:
         },
       });
 
-      const jsonText = response.text?.trim() || '{}';
-      const result = JSON.parse(jsonText);
-     if (result?.movieCards?.length) {
+   const jsonText = response.text?.trim() || '{}';
+const result = JSON.parse(jsonText);
+
+if (result?.movieCards?.length) {
   result.movieCards = await Promise.all(
     result.movieCards.map(async (movie: any) => {
-      const tmdbData = await fetchTmdbCandidates(movie.title);
+      try {
+        const tmdbData = await fetchTmdbCandidates(movie.title);
 
-      const matched = tmdbData.find(
-        (item: any) =>
-          item.title?.toLowerCase() === movie.title?.toLowerCase()
-      );
+        const matched = tmdbData.find(
+          (item: any) =>
+            item.title?.toLowerCase() === movie.title?.toLowerCase()
+        );
 
-      if (matched) {
-        return {
-          ...movie,
-          tmdbId: matched.tmdbId,
-          poster_path: matched.poster_path,
-          backdrop_path: matched.backdrop_path,
-          rating: matched.rating,
-          year: matched.year,
-          overview: matched.overview,
-        };
+        if (matched) {
+          return {
+            ...movie,
+            tmdbId: matched.tmdbId,
+            title: matched.title || movie.title,
+            poster_path: matched.poster_path || movie.poster_path || '',
+            backdrop_path: matched.backdrop_path || movie.backdrop_path || '',
+            rating: matched.rating ?? movie.rating,
+            year: matched.year || movie.year,
+            overview: matched.overview || movie.overview,
+            genre: matched.genre || movie.genre,
+          };
+        }
+
+        return movie;
+      } catch (error) {
+        console.warn(TMDB enrichment failed for ${movie.title}, error);
+        return movie;
       }
-
-      return movie;
     })
   );
 }
-      return res.status(200).json(result);
+
+if (result && result.replyText) {
+  return res.status(200).json(result);
+} 
+ 
